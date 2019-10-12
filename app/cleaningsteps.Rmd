@@ -1,0 +1,264 @@
+---
+title: "shiny project"
+author: "MianchunLu"
+date: "October 8, 2019"
+output: html_document
+---
+
+```{r}
+#install.packages("shiny")
+#install.packages("RColorBrewer")
+library(RColorBrewer)
+library(shiny)
+library(lubridate)
+library(leaflet)
+library(treemap)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(ggmap)
+library(stringr)
+library(png)
+```
+
+```{r}
+## Set the API so that I can use geocode()
+```
+
+### load movie events data
+```{r}
+setwd()
+data14 <- fread('Chicago_Park_District__Movies_in_the_Parks_2014.csv')
+data15 <- fread('Chicago_Park_District__Movies_in_the_Parks_2015.csv')
+data16 <- fread('Chicago_Park_District__Movies_in_the_Parks_2016.csv')
+data17 <- fread('Chicago_Park_District__Movies_in_the_Parks_2017.csv')
+data18 <- fread('Chicago_Park_District__Movies_in_the_Parks_2018.csv')
+data19 <- fread('Chicago_Park_District__Movies_in_the_Parks_2019.csv')
+```
+
+### merge the data in different year together and correct the data format
+```{r}
+col=c('StartDate',"ParkName", "Phone", "MovieName", "MovieClosedCaption", "MovieRating", "ParkAddress", "CommunityAreas", "ZipCode", "Wards", "Year")
+
+# Since the event data each year was downloaded from open data source respectively, extra data cleaning steps are needed to alter them into unified format.
+
+# 2014
+colnames(data14)[colnames(data14)=="Location"]="ParkName"
+colnames(data14)[colnames(data14)=="Location 1"]="ParkAddress"
+colnames(data14)[colnames(data14)=="Community Areas"]="CommunityAreas"
+colnames(data14)[colnames(data14)=="Zip Codes"]="ZipCode"
+data14$"Year"="2014"
+data14$StartDate=substr(data14$StartDate,1,10)
+data14$StartDate=mdy(data14$StartDate)
+
+# 2015
+colnames(data15)[colnames(data15)=="Location 1"]="ParkAddress"
+colnames(data15)[colnames(data15)=="Community Areas"]="CommunityAreas"
+colnames(data15)[colnames(data15)=="Zip Codes"]="ZipCode"
+data15$"Year"="2015"
+data15$StartDate=substr(data15$StartDate,1,10)
+data15$StartDate=mdy(data15$StartDate)
+
+# 2016
+colnames(data16)[colnames(data16)=="Location"]="ParkName"
+colnames(data16)[colnames(data16)=="Location 1"]="ParkAddress"
+colnames(data16)[colnames(data16)=="Community Areas"]="CommunityAreas"
+colnames(data16)[colnames(data16)=="Zip Codes"]="ZipCode"
+data16$"Year"="2016"
+data16$StartDate=mdy(data16$StartDate)
+
+# 2017
+colnames(data17)[colnames(data17)=="Date"]="StartDate"
+colnames(data17)[colnames(data17)=="Park"]="ParkName"
+colnames(data17)[colnames(data17)=="Park Phone"]="Phone"
+colnames(data17)[colnames(data17)=="Title"]="MovieName"
+colnames(data17)[colnames(data17)=="CC"]="MovieClosedCaption"
+colnames(data17)[colnames(data17)=="Rating"]="MovieRating"
+colnames(data17)[colnames(data17)=="Park Address"]="ParkAddress"
+colnames(data17)[colnames(data17)=="Community Areas"]="CommunityAreas"
+colnames(data17)[colnames(data17)=="Zip Codes"]="ZipCode"
+data17$"Year"="2017"
+data17$StartDate=mdy(data17$StartDate)
+
+# 2018
+colnames(data18)[colnames(data18)=="Date"]="StartDate"
+colnames(data18)[colnames(data18)=="Park"]="ParkName"
+colnames(data18)[colnames(data18)=="Park Phone"]="Phone"
+colnames(data18)[colnames(data18)=="Title"]="MovieName"
+colnames(data18)[colnames(data18)=="CC"]="MovieClosedCaption"
+colnames(data18)[colnames(data18)=="Rating"]="MovieRating"
+colnames(data18)[colnames(data18)=="Park Address"]="ParkAddress"
+colnames(data18)[colnames(data18)=="Community Areas"]="CommunityAreas"
+colnames(data18)[colnames(data18)=="Zip Codes"]="ZipCode"
+data18$"Year"="2018"
+data18$StartDate=mdy(data18$StartDate)
+
+# 2019
+colnames(data19)[colnames(data19)=="Date"]="StartDate"
+colnames(data19)[colnames(data19)=="Park"]="ParkName"
+colnames(data19)[colnames(data19)=="Park Phone"]="Phone"
+colnames(data19)[colnames(data19)=="Title"]="MovieName"
+colnames(data19)[colnames(data19)=="CC"]="MovieClosedCaption"
+colnames(data19)[colnames(data19)=="Rating"]="MovieRating"
+colnames(data19)[colnames(data19)=="Park Address"]="ParkAddress"
+colnames(data19)[colnames(data19)=="Community Areas"]="CommunityAreas"
+colnames(data19)[colnames(data19)=="Zip Codes"]="ZipCode"
+data19$"Year"="2019"
+data19$StartDate=mdy(data19$StartDate)
+
+l=list(data14[, col,with=FALSE], data15[, col,with=FALSE], data16[, col,with=FALSE], data17[, col,with=FALSE], data18[, col,with=FALSE], data19[, col,with=FALSE])
+data = rbindlist(l)
+
+## get the monthe and weekday
+data$Weekday=wday(data$StartDate, label=TRUE, abbr=FALSE)
+data$month=month(data$StartDate,label=T)
+
+## convert the location into latitude and longitude
+data$longitude=geocode(data$ParkName)$lon
+data$latitude=geocode(data$ParkName)$lat
+
+## make sure the data in the same format
+data[MovieClosedCaption=="Y"]$MovieClosedCaption="Yes"
+data[MovieClosedCaption=="N"]$MovieClosedCaption="No"
+
+data$CommunityAreas=as.character(data$CommunityAreas)
+
+fwrite(data, "MovieInPark14-19.csv")
+data=fread("MovieInPark14-19.csv")
+```
+
+### First page: map of "movie in park" event in Chicago each year
+button: check box--year, checkbox--weekday
+interactive map: show information of the park, and the number of events and details about each event(movie name)
+```{r}
+## test the interactive map
+leaflet()%>%
+  setView(lng = -87.6, lat = 41.9, zoom = 13)%>% 
+  addTiles()%>%addProviderTiles(providers$Hydda.Full)
+
+a<-data[, .(count = .N, val = list(MovieName)), by = c("ParkName","longitude","latitude")]
+
+a$information=paste("<h2>","<b>",a$ParkName,"</b>","</h2>",
+                    "The number of events:", "<b>",a$count,"</b>","<br/>","<br/>",
+                    "<b>Movies include:</b>","</br>",
+                    a$val)
+a$information=str_remove(a$information,"c\\(")
+
+a1=a[a$count==1]
+a2=a[a$count>1]
+a2$information=substr(a2$information, 1, nchar(a2$information)-1)
+a3=rbind(a1,a2)
+
+## single color
+leaflet(a3)%>%
+        setView(lng = -87.6, lat = 41.9, zoom = 11)%>% 
+        addTiles()%>%
+        addProviderTiles(providers$Hydda.Full)%>%
+        addMarkers(~longitude, ~latitude, popup = ~information) 
+
+## multiple colors
+getColor <- function(a3) {
+  sapply(a3$count, function(count) {
+  if(count <= 4) {
+    "green"
+  } else if(count <= 6) {
+    "orange"
+  } else {
+    "red"
+  } })
+}
+
+icons <- awesomeIcons(
+  icon = 'ios-close',
+  iconColor = 'black',
+  library = 'ion',
+  markerColor = getColor(a3)
+)
+
+leaflet(a3)%>%
+        setView(lng = -87.6, lat = 41.9, zoom = 11)%>% 
+        addTiles()%>%
+        addProviderTiles(providers$Hydda.Full)%>%
+        addAwesomeMarkers(~longitude, ~latitude, icon=icons,popup = ~information) 
+```
+
+### Second page: statistics graphs
+```{r}
+## weekday--count
+data %>%
+  select(Weekday)%>%
+  group_by(Weekday)%>%
+  ggplot(aes(x=Weekday))+
+  geom_bar(fill="#FF9999")+
+  scale_x_discrete(limits=c("Monday","Tuesday","Wednesday","Thursday", "Friday","Saturday","Sunday"))+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+## Year--count
+data %>%
+  select(Year)%>%
+  group_by(Year)%>%
+  ggplot(aes(x=Year))+
+  geom_bar(fill="#FF9999")+
+  scale_x_discrete(limits=c("2014","2015","2016","2017", "2018","2019"))+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+## Month--count
+data %>%
+  select(month)%>%
+  group_by(month)%>%
+  ggplot(aes(x=month))+
+  geom_bar(fill="#FF9999")+
+  scale_x_discrete(limits=c("Jan","Feb","Mar","Apr", "May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"))+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+## community areas & year & count ---- tree map
+data$CommunityAreas=as.character(data$CommunityAreas)
+tmp=data[, .(count=.N),by="CommunityAreas"]
+tmp=tmp[CommunityAreas!=""]
+tmp$info=paste("Area No.",tmp$CommunityAreas,", ","Events: ",tmp$count,sep="")
+fwrite(tmp, "maptree_data.csv")
+tmp=fread("maptree_data.csv")
+tmp$CommunityAreas=as.character(tmp$CommunityAreas)
+treemap(tmp,index="info",vSize="count",vColor="CommunityAreas",type="categorical",palette="RdYlBu",
+        drop.unused.levels = FALSE, position.legend="none",fontsize.labels=8)
+
+## MovieRating & MovieClosedCaption
+p1<-data %>%
+  select(MovieRating)%>%
+  filter(MovieRating!="N/A" & MovieRating != "")%>%
+  group_by(MovieRating)%>%
+  ggplot(aes(x=MovieRating))+
+  geom_bar(fill="#FF9999")+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p2<-data %>%
+  select(MovieClosedCaption)%>%
+  filter(MovieClosedCaption!="N/A" & MovieClosedCaption != "")%>%
+  group_by(MovieClosedCaption)%>%
+  ggplot(aes(x=MovieClosedCaption))+
+  geom_bar(fill="#FF9999")+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+grid.arrange(p1, p2, nrow = 1)
+
+
+## MovieName--top 
+tmp=data[, .(count=.N),by=MovieName]
+nb.cols <- 40
+mycolors <- colorRampPalette(brewer.pal(8, "Set2"))(nb.cols)
+
+tmp%>%
+  arrange(desc(count)) %>%
+  slice(1:20)%>%
+  ggplot(aes(x=reorder(MovieName,count), y=count,fill=factor(MovieName)))+
+              geom_bar(stat='identity')+coord_flip()+theme_light()+theme(legend.position="none")+
+  scale_fill_manual(values = mycolors)
+```
+
+
+### Add a real map of City of Chicago to the treemap
+```{r}
+img(src = "community_areas.png",width="100%")
+```
+
